@@ -51,7 +51,7 @@ class World:
         self.obs_dim = (C.OBS_SAMPLE_N * C.OBS_SAMPLE_N * 2) + 2
         self.h1 = C.HIDDEN1
         self.h2 = C.HIDDEN2
-        self.out_dim = 5
+        self.out_dim = 6
         self.brain = init_brains(self.cap, self.obs_dim, self.h1, self.h2, self.out_dim, device)
 
         self.baldwin_enabled = C.BALDWIN_ENABLED_DEFAULT
@@ -238,8 +238,19 @@ class World:
         return obs, idx
 
     def _action_from_outputs(self, y: torch.Tensor):
-        move = torch.tanh(y[:, 0:2]) * C.MAX_MOVE_PX
-        logits = y[:, 2:5] / max(1e-6, C.MODE_TEMPERATURE)
+        # y = [dx, dy, speed, move_logit, sex_logit, attack_logit]
+        # direction from tanh(dx,dy), throttle from sigmoid(speed)
+        dxdy = torch.tanh(y[:, 0:2])
+        norm = torch.sqrt(dxdy[:, 0] ** 2 + dxdy[:, 1] ** 2)
+        speed = torch.sigmoid(y[:, 2])
+        # If direction norm is tiny, do not move (avoid division blow-up)
+        eps = 1e-6
+        inv = torch.where(norm > eps, 1.0 / norm, torch.zeros_like(norm))
+        dirx = dxdy[:, 0] * inv
+        diry = dxdy[:, 1] * inv
+        move = torch.stack([dirx * speed, diry * speed], dim=1) * C.MAX_MOVE_PX
+
+        logits = y[:, 3:6] / max(1e-6, C.MODE_TEMPERATURE)
         probs = torch.softmax(logits, dim=1)
         mode = torch.multinomial(probs, num_samples=1).squeeze(1)
         return move, mode, logits
@@ -578,7 +589,7 @@ class World:
             self.brain.W3[idx], self.brain.b3[idx],
         )
         h2, y = forward(sub, obs)
-        logits = y[:, 2:5] / max(1e-6, C.MODE_TEMPERATURE)
+        logits = y[:, 3:6] / max(1e-6, C.MODE_TEMPERATURE)
         probs = torch.softmax(logits, dim=1).squeeze(0).detach().cpu().numpy()
 
         return {

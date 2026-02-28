@@ -58,7 +58,7 @@ def baldwin_update_last_layer(brain: BrainBatch, h2: torch.Tensor, logits: torch
 
     out_dim = brain.b3.shape[1]
     dY = torch.zeros((N, out_dim), device=probs.device, dtype=probs.dtype)
-    dY[:, 2:5] = dlogits  # mode logits live in last 3 outputs
+    dY[:, 3:6] = dlogits  # mode logits live in last 3 outputs
 
     gradW3 = h2.unsqueeze(2) * dY.unsqueeze(1)
     gradb3 = dY
