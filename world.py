@@ -43,11 +43,13 @@ class World:
         self.age = torch.zeros((self.cap,), device=device, dtype=torch.int32)
 
         self.food_xy = np.zeros((0, 2), dtype=np.float32)
+        self.food_e = np.zeros((0,), dtype=np.float32)
+        self.food_e = np.zeros((0,), dtype=np.float32)
         self.recall: List[RecallGenome] = []
 
         self.obs_dim = (C.OBS_SAMPLE_N * C.OBS_SAMPLE_N * 2) + 2
-        self.h1 = 16
-        self.h2 = 16
+        self.h1 = C.HIDDEN1
+        self.h2 = C.HIDDEN2
         self.out_dim = 5
         self.brain = init_brains(self.cap, self.obs_dim, self.h1, self.h2, self.out_dim, device)
 
@@ -68,6 +70,7 @@ class World:
         self.ticks = 0
         self.reset_count += 1
         self.food_xy = np.zeros((0, 2), dtype=np.float32)
+        self.food_e = np.zeros((0,), dtype=np.float32)
         if hard:
             self.recall.clear()
 
@@ -98,10 +101,6 @@ class World:
         idx = free[:k]
         self.alive[idx] = True
         self.age[idx] = 0
-        # Update rate histories
-        self._asex_hist.append(self._asex_this)
-        self._sex_hist.append(self._sex_this)
-        self._kill_hist.append(self._kill_this)
         self.N = int(self.alive.sum().item())
         return idx
 
@@ -170,6 +169,7 @@ class World:
         xs = np.random.rand(k).astype(np.float32) * C.W
         ys = np.random.rand(k).astype(np.float32) * C.H
         self.food_xy = np.concatenate([self.food_xy, np.stack([xs, ys], axis=1)], axis=0)
+        self.food_e = np.concatenate([self.food_e, np.full((k,), C.FOOD_ENERGY, dtype=np.float32)], axis=0)
 
     def _raster_world(self):
         gw, gh = C.OBS_GRID_W, C.OBS_GRID_H
@@ -296,6 +296,14 @@ class World:
             self.brain.W3[idx] = sub.W3
             self.brain.b3[idx] = sub.b3
 
+        # Update rate histories (once per tick)
+
+        self._asex_hist.append(self._asex_this)
+
+        self._sex_hist.append(self._sex_this)
+
+        self._kill_hist.append(self._kill_this)
+
         self.N = int(self.alive.sum().item())
 
     def _resolve_one_interaction(self, idx: torch.Tensor, mode: torch.Tensor):
@@ -368,6 +376,7 @@ class World:
             xs = (float(self.x[i].item()) + np.cos(ang) * rad) % C.W
             ys = (float(self.y[i].item()) + np.sin(ang) * rad) % C.H
             self.food_xy = np.concatenate([self.food_xy, np.stack([xs, ys], axis=1).astype(np.float32)], axis=0)
+            self.food_e = np.concatenate([self.food_e, np.full((pellets,), C.CORPSE_FOOD_ENERGY, dtype=np.float32)], axis=0)
         self.alive[i] = False
         self.energy[i] = 0.0
 
@@ -401,7 +410,9 @@ class World:
         self.strength[idx] = torch.clamp(self.strength[idx], C.STRENGTH_MIN, C.STRENGTH_MAX)
         self.hue[idx] = (self.hue[parents] + 0.02 * torch.randn_like(self.hue[idx])) % 1.0
         self.emax[idx] = self.mass[idx] * C.ENERGY_PER_MASS
-        self.energy[idx] = self.emax[idx]
+        per = budget / float(idx.numel())
+        child_e = torch.clamp(torch.full((idx.numel(),), per, device=self.device), max=self.emax[idx])
+        self.energy[idx] = child_e
 
         px = torch.where(parents == iA, self.x[iA], self.x[iB])
         py = torch.where(parents == iA, self.y[iA], self.y[iB])
@@ -486,7 +497,7 @@ class World:
                         ddy = torus_delta(ay[k], fy[fi], C.H)
                         if ddx * ddx + ddy * ddy <= rr2:
                             eaten[fi] = True
-                            new_e = float(self.energy[i].item()) + C.FOOD_ENERGY
+                            new_e = float(self.energy[i].item()) + float(self.food_e[fi])
                             # Apply food first
                             self.energy[i] = new_e
                             if C.ASEX_TRIGGER_OVERFLOW and new_e > float(self.emax[i].item()):
@@ -494,6 +505,7 @@ class World:
                                 self._asexual_repro(int(i), energy_budget=new_e)
         if eaten.any():
             self.food_xy = self.food_xy[~eaten]
+            self.food_e = self.food_e[~eaten]
 
     def rate_asex(self) -> float:
         n = len(self._asex_hist) if hasattr(self, "_asex_hist") else 0

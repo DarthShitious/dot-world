@@ -17,7 +17,7 @@ class Renderer:
         alive = int(world.alive.sum().item())
         food_n = len(world.food_xy)
 
-        total_e = float(world.energy[world.alive].sum().item()) + float(food_n) * C.FOOD_ENERGY
+        total_e = float(world.energy[world.alive].sum().item()) + float(world.food_e.sum() if hasattr(world, 'food_e') else (food_n * C.FOOD_ENERGY))
         txt1 = f"ticks={world.ticks:8d}  alive={alive:5d}  food={food_n:5d}  E_total={total_e:10.1f}  resets={world.reset_count:5d}  Baldwin={'ON' if world.baldwin_enabled else 'OFF'}"
         txt2 = f"AsexRate={world.rate_asex():5.2f}/tick  SexRate={world.rate_sex():5.2f}/tick  KillRate={world.rate_kill():5.2f}/tick   {extra}   fps={fps:5.1f}"
         self.screen.blit(self.font.render(txt1, True, (235, 235, 235)), (10, 8))
