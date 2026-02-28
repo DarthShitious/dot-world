@@ -37,3 +37,25 @@ def sat_from_energy(e: float, emax: float, min_sat: float = 0.15) -> float:
         return min_sat
     frac = max(0.0, min(1.0, e / emax))
     return min_sat + (1.0 - min_sat) * frac
+
+
+def weight_to_rgb(v: float, vmax: float):
+    """Diverging blue-white-red colormap for weights."""
+    if vmax <= 1e-12:
+        return (255, 255, 255)
+    t = max(-1.0, min(1.0, v / vmax))
+    if t >= 0.0:
+        c = int(255 * (1.0 - t))
+        return (255, c, c)
+    else:
+        c = int(255 * (1.0 - (-t)))
+        return (c, c, 255)
+
+def scalar_to_gray(v: float, vmin: float, vmax: float):
+    if vmax <= vmin + 1e-12:
+        g = 0
+    else:
+        t = (v - vmin) / (vmax - vmin)
+        t = max(0.0, min(1.0, t))
+        g = int(255 * t)
+    return (g, g, g)

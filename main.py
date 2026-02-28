@@ -26,6 +26,12 @@ def main():
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 running = False
+            elif ev.type == pygame.MOUSEBUTTONDOWN:
+                if ev.button == 1:
+                    mx, my = ev.pos
+                    if mx < C.W and C.HUD_H <= my < (C.HUD_H + C.H):
+                        if hasattr(world, "pick_dot"):
+                            world.pick_dot(float(mx), float(my - C.HUD_H), C.PICK_RADIUS_PX)
             elif ev.type == pygame.KEYDOWN:
                 if ev.key == pygame.K_ESCAPE:
                     running = False
@@ -56,6 +62,12 @@ def main():
                     for ev in pygame.event.get():
                         if ev.type == pygame.QUIT:
                             running = False
+                        elif ev.type == pygame.MOUSEBUTTONDOWN:
+                            if ev.button == 1:
+                                mx, my = ev.pos
+                                if mx < C.W and C.HUD_H <= my < (C.HUD_H + C.H):
+                                    if hasattr(world, "pick_dot"):
+                                        world.pick_dot(float(mx), float(my - C.HUD_H), C.PICK_RADIUS_PX)
                         elif ev.type == pygame.KEYDOWN:
                             if ev.key == pygame.K_ESCAPE:
                                 running = False

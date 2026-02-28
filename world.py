@@ -31,6 +31,7 @@ class World:
 
         self.cap = C.MAX_POP
         self.N = 0
+        self.selected_idx = None
 
         self.x = torch.zeros((self.cap,), device=device)
         self.y = torch.zeros((self.cap,), device=device)
@@ -54,6 +55,9 @@ class World:
         self.brain = init_brains(self.cap, self.obs_dim, self.h1, self.h2, self.out_dim, device)
 
         self.baldwin_enabled = C.BALDWIN_ENABLED_DEFAULT
+
+        # Selected dot (for inspector)
+        self.selected_idx = None
 
         # --- Metrics (rates averaged over RATE_WINDOW ticks) ---
         self.rate_window = int(getattr(C, "RATE_WINDOW", 16))
@@ -507,6 +511,93 @@ class World:
             self.food_xy = self.food_xy[~eaten]
             self.food_e = self.food_e[~eaten]
 
+
+
+    def pick_dot(self, wx: float, wy: float, radius_px: float):
+        """Pick nearest alive dot within radius (world coords, torus). Sets self.selected_idx."""
+        idx = self.alive.nonzero(as_tuple=False).squeeze(1)
+        if idx.numel() == 0:
+            self.selected_idx = None
+            return None
+        x = self.x[idx]
+        y = self.y[idx]
+        dx = x - float(wx)
+        dy = y - float(wy)
+        dx = torch.where(dx > 0.5 * C.W, dx - C.W, dx)
+        dx = torch.where(dx < -0.5 * C.W, dx + C.W, dx)
+        dy = torch.where(dy > 0.5 * C.H, dy - C.H, dy)
+        dy = torch.where(dy < -0.5 * C.H, dy + C.H, dy)
+        d2 = dx * dx + dy * dy
+        minv, arg = torch.min(d2, dim=0)
+        if float(minv.item()) <= float(radius_px) * float(radius_px):
+            sel = int(idx[int(arg.item())].item())
+            self.selected_idx = sel
+            return sel
+        self.selected_idx = None
+        return None
+
+    def inspect_selected(self):
+        """Return dict for inspector for selected dot, or None."""
+        if self.selected_idx is None:
+            return None
+        i = int(self.selected_idx)
+        if i < 0 or i >= self.cap or (not bool(self.alive[i].item())):
+            self.selected_idx = None
+            return None
+
+        raster = self._raster_world()
+
+        idx = torch.tensor([i], device=self.device, dtype=torch.long)
+        gw, gh = C.OBS_GRID_W, C.OBS_GRID_H
+        rx = (self.x[idx] / C.W * gw).to(torch.int64) % gw
+        ry = (self.y[idx] / C.H * gh).to(torch.int64) % gh
+        N = C.OBS_SAMPLE_N
+        range_cx = max(1, int((C.OBS_RANGE_PX / C.W) * gw))
+        range_cy = max(1, int((C.OBS_RANGE_PX / C.H) * gh))
+        ox = torch.linspace(-range_cx, range_cx, N, device=self.device).to(torch.int64)
+        oy = torch.linspace(-range_cy, range_cy, N, device=self.device).to(torch.int64)
+        gx = (rx[:, None, None] + ox[None, None, :]) % gw
+        gy = (ry[:, None, None] + oy[None, :, None]) % gh
+
+        hue = raster[0][gy, gx]
+        sat = raster[1][gy, gx]
+        food = raster[2][gy, gx]
+        fh = torch.full_like(hue, 0.33)
+        fs = torch.full_like(sat, 1.0)
+        hue = torch.where(food > 0.5, fh, hue)
+        sat = torch.where(food > 0.5, fs, sat)
+
+        flat = torch.stack([hue, sat], dim=3).reshape(1, -1)
+        efrac = (self.energy[idx] / torch.clamp(self.emax[idx], min=1e-6)).unsqueeze(1)
+        bias = torch.ones((1, 1), device=self.device)
+        obs = torch.cat([flat, efrac, bias], dim=1)
+
+        sub = BrainBatch(
+            self.brain.W1[idx], self.brain.b1[idx],
+            self.brain.W2[idx], self.brain.b2[idx],
+            self.brain.W3[idx], self.brain.b3[idx],
+        )
+        h2, y = forward(sub, obs)
+        logits = y[:, 2:5] / max(1e-6, C.MODE_TEMPERATURE)
+        probs = torch.softmax(logits, dim=1).squeeze(0).detach().cpu().numpy()
+
+        return {
+            "idx": i,
+            "mass": float(self.mass[i].item()),
+            "strength": float(self.strength[i].item()),
+            "hue": float(self.hue[i].item()),
+            "energy": float(self.energy[i].item()),
+            "emax": float(self.emax[i].item()),
+            "age": int(self.age[i].item()),
+            "probs": probs,
+            "y": y.squeeze(0).detach().cpu().numpy(),
+            "W1": self.brain.W1[i].detach().cpu().numpy(),
+            "b1": self.brain.b1[i].detach().cpu().numpy(),
+            "W2": self.brain.W2[i].detach().cpu().numpy(),
+            "b2": self.brain.b2[i].detach().cpu().numpy(),
+            "W3": self.brain.W3[i].detach().cpu().numpy(),
+            "b3": self.brain.b3[i].detach().cpu().numpy(),
+        }
     def rate_asex(self) -> float:
         n = len(self._asex_hist) if hasattr(self, "_asex_hist") else 0
         return (sum(self._asex_hist) / float(n)) if n > 0 else 0.0
