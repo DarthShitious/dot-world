@@ -15,6 +15,8 @@ class Renderer:
     def draw(self, world, render_entities: bool, extra: str, fps: float):
         self.screen.fill((16, 16, 16), pygame.Rect(0, 0, C.W, C.HUD_H))
         self.screen.fill((0, 0, 0), pygame.Rect(0, C.HUD_H, C.W, C.H))
+        if getattr(C, 'ENABLE_BOUNDARY', False):
+            pygame.draw.rect(self.screen, (40, 40, 40), pygame.Rect(0, C.HUD_H, C.W, C.H), 1)
 
         alive = int(world.alive.sum().item())
         food_n = len(world.food_xy)

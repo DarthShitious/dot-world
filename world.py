@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 import config as C
-from utils import torus_delta
+from utils import torus_delta, plain_delta
 from brain import BrainBatch, init_brains, forward, mutate_brain, copy_brain, baldwin_update_last_layer
 
 @dataclass
@@ -48,7 +48,7 @@ class World:
         self.food_e = np.zeros((0,), dtype=np.float32)
         self.recall: List[RecallGenome] = []
 
-        self.obs_dim = (C.OBS_SAMPLE_N * C.OBS_SAMPLE_N * 2) + 2
+        self.obs_dim = (C.OBS_SAMPLE_N * C.OBS_SAMPLE_N * 3) + 2
         self.h1 = C.HIDDEN1
         self.h2 = C.HIDDEN2
         self.out_dim = 6
@@ -126,6 +126,10 @@ class World:
         for k in range(n):
             g = random.choice(self.recall)
             i = int(idx[k].item())
+            # If the recalled genome is incompatible (e.g., obs_dim changed), fall back to random init.
+            if g.W1.shape != tuple(self.brain.W1[i].shape):
+                self._rand_init(idx[k:k+1])
+                continue
             self.x[i] = random.random() * C.W
             self.y[i] = random.random() * C.H
             self.mass[i] = g.mass
@@ -158,8 +162,12 @@ class World:
             self.recall.pop(0)
 
     def _wrap(self):
-        self.x %= C.W
-        self.y %= C.H
+        if getattr(C, "ENABLE_BOUNDARY", False):
+            self.x.clamp_(0.0, float(C.W))
+            self.y.clamp_(0.0, float(C.H))
+        else:
+            self.x %= C.W
+            self.y %= C.H
 
     def _spawn_food(self, expected: float):
         if len(self.food_xy) >= C.MAX_FOOD:
@@ -220,8 +228,16 @@ class World:
         ox = torch.linspace(-range_cx, range_cx, N, device=self.device).to(torch.int64)
         oy = torch.linspace(-range_cy, range_cy, N, device=self.device).to(torch.int64)
 
-        gx = (rx[:, None, None] + ox[None, None, :]) % gw
-        gy = (ry[:, None, None] + oy[None, :, None]) % gh
+        if getattr(C, "ENABLE_BOUNDARY", False):
+            gx_raw = (rx[:, None, None] + ox[None, None, :])
+            gy_raw = (ry[:, None, None] + oy[None, :, None])
+            boundary = (gx_raw < 0) | (gx_raw >= gw) | (gy_raw < 0) | (gy_raw >= gh)
+            gx = torch.clamp(gx_raw, 0, gw - 1)
+            gy = torch.clamp(gy_raw, 0, gh - 1)
+        else:
+            gx = (rx[:, None, None] + ox[None, None, :]) % gw
+            gy = (ry[:, None, None] + oy[None, :, None]) % gh
+            boundary = torch.zeros((n, N, N), device=self.device, dtype=torch.bool)
 
         hue = raster[0][gy, gx]
         sat = raster[1][gy, gx]
@@ -231,7 +247,8 @@ class World:
         hue = torch.where(food > 0.5, fh, hue)
         sat = torch.where(food > 0.5, fs, sat)
 
-        flat = torch.stack([hue, sat], dim=3).reshape(n, -1)
+        bnd = boundary.to(hue.dtype)
+        flat = torch.stack([hue, sat, bnd], dim=3).reshape(n, -1)
         efrac = (self.energy[idx] / torch.clamp(self.emax[idx], min=1e-6)).unsqueeze(1)
         bias = torch.ones((n, 1), device=self.device)
         obs = torch.cat([flat, efrac, bias], dim=1)
@@ -332,8 +349,12 @@ class World:
         gh = int(C.H / cell) + 1
         buckets = [[] for _ in range(gw * gh)]
         for k, _i in enumerate(alive_idx):
-            cx = int(ax[k] / cell) % gw
-            cy = int(ay[k] / cell) % gh
+            if getattr(C, 'ENABLE_BOUNDARY', False):
+                cx = max(0, min(gw - 1, int(ax[k] / cell)))
+                cy = max(0, min(gh - 1, int(ay[k] / cell)))
+            else:
+                cx = int(ax[k] / cell) % gw
+                cy = int(ay[k] / cell) % gh
             buckets[cy * gw + cx].append(k)
 
         best = None
@@ -345,7 +366,14 @@ class World:
                     continue
                 for dy in (-1, 0, 1):
                     for dx in (-1, 0, 1):
-                        nb = buckets[((cy + dy) % gh) * gw + ((cx + dx) % gw)]
+                        if getattr(C, 'ENABLE_BOUNDARY', False):
+                            nx = cx + dx
+                            ny = cy + dy
+                            if nx < 0 or nx >= gw or ny < 0 or ny >= gh:
+                                continue
+                            nb = buckets[ny * gw + nx]
+                        else:
+                            nb = buckets[((cy + dy) % gh) * gw + ((cx + dx) % gw)]
                         if not nb:
                             continue
                         for ka in base:
@@ -354,8 +382,8 @@ class World:
                                 if kb <= ka:
                                     continue
                                 xb, yb = ax[kb], ay[kb]
-                                ddx = torus_delta(xa, xb, C.W)
-                                ddy = torus_delta(ya, yb, C.H)
+                                ddx = plain_delta(xa, xb) if getattr(C, 'ENABLE_BOUNDARY', False) else torus_delta(xa, xb, C.W)
+                                ddy = plain_delta(ya, yb) if getattr(C, 'ENABLE_BOUNDARY', False) else torus_delta(ya, yb, C.H)
                                 d2 = ddx * ddx + ddy * ddy
                                 if d2 <= r2:
                                     if best is None or d2 < best[0]:
@@ -388,8 +416,14 @@ class World:
         if pellets > 0:
             ang = np.random.rand(pellets).astype(np.float32) * (2 * np.pi)
             rad = (np.random.rand(pellets).astype(np.float32) ** 0.5) * C.CORPSE_SPREAD_PX
-            xs = (float(self.x[i].item()) + np.cos(ang) * rad) % C.W
-            ys = (float(self.y[i].item()) + np.sin(ang) * rad) % C.H
+            xs = (float(self.x[i].item()) + np.cos(ang) * rad)
+            ys = (float(self.y[i].item()) + np.sin(ang) * rad)
+            if getattr(C, 'ENABLE_BOUNDARY', False):
+                xs = np.clip(xs, 0.0, float(C.W))
+                ys = np.clip(ys, 0.0, float(C.H))
+            else:
+                xs = xs % C.W
+                ys = ys % C.H
             self.food_xy = np.concatenate([self.food_xy, np.stack([xs, ys], axis=1).astype(np.float32)], axis=0)
             self.food_e = np.concatenate([self.food_e, np.full((pellets,), C.CORPSE_FOOD_ENERGY, dtype=np.float32)], axis=0)
         self.alive[i] = False
@@ -432,8 +466,12 @@ class World:
         px = torch.where(parents == iA, self.x[iA], self.x[iB])
         py = torch.where(parents == iA, self.y[iA], self.y[iB])
         jit = torch.randn((idx.numel(), 2), device=self.device) * 6.0
-        self.x[idx] = (px + jit[:, 0]) % C.W
-        self.y[idx] = (py + jit[:, 1]) % C.H
+        if getattr(C, 'ENABLE_BOUNDARY', False):
+            self.x[idx] = torch.clamp(px + jit[:, 0], 0.0, float(C.W))
+            self.y[idx] = torch.clamp(py + jit[:, 1], 0.0, float(C.H))
+        else:
+            self.x[idx] = (px + jit[:, 0]) % C.W
+            self.y[idx] = (py + jit[:, 1]) % C.H
 
 
     def _asexual_repro(self, i: int, energy_budget: float):
@@ -475,8 +513,12 @@ class World:
 
         # Spawn near parent position
         jit = torch.randn((idx.numel(), 2), device=self.device) * 6.0
-        self.x[idx] = (self.x[i] + jit[:, 0]) % C.W
-        self.y[idx] = (self.y[i] + jit[:, 1]) % C.H
+        if getattr(C, 'ENABLE_BOUNDARY', False):
+            self.x[idx] = torch.clamp(self.x[i] + jit[:, 0], 0.0, float(C.W))
+            self.y[idx] = torch.clamp(self.y[i] + jit[:, 1], 0.0, float(C.H))
+        else:
+            self.x[idx] = (self.x[i] + jit[:, 0]) % C.W
+            self.y[idx] = (self.y[i] + jit[:, 1]) % C.H
 
     def _eat_pass(self):
         if len(self.food_xy) == 0:
@@ -500,16 +542,27 @@ class World:
         eaten = np.zeros((len(self.food_xy),), dtype=np.bool_)
         rr2 = r * r
         for k, i in enumerate(alive_idx):
-            cx = int(ax[k] / cell) % gw
-            cy = int(ay[k] / cell) % gh
+            if getattr(C, 'ENABLE_BOUNDARY', False):
+                cx = max(0, min(gw - 1, int(ax[k] / cell)))
+                cy = max(0, min(gh - 1, int(ay[k] / cell)))
+            else:
+                cx = int(ax[k] / cell) % gw
+                cy = int(ay[k] / cell) % gh
             for dy in (-1, 0, 1):
                 for dx in (-1, 0, 1):
-                    bucket = fb[((cy + dy) % gh) * gw + ((cx + dx) % gw)]
+                    if getattr(C, 'ENABLE_BOUNDARY', False):
+                        nx = cx + dx
+                        ny = cy + dy
+                        if nx < 0 or nx >= gw or ny < 0 or ny >= gh:
+                            continue
+                        bucket = fb[ny * gw + nx]
+                    else:
+                        bucket = fb[((cy + dy) % gh) * gw + ((cx + dx) % gw)]
                     for fi in bucket:
                         if eaten[fi]:
                             continue
-                        ddx = torus_delta(ax[k], fx[fi], C.W)
-                        ddy = torus_delta(ay[k], fy[fi], C.H)
+                        ddx = plain_delta(ax[k], fx[fi]) if getattr(C, 'ENABLE_BOUNDARY', False) else torus_delta(ax[k], fx[fi], C.W)
+                        ddy = plain_delta(ay[k], fy[fi]) if getattr(C, 'ENABLE_BOUNDARY', False) else torus_delta(ay[k], fy[fi], C.H)
                         if ddx * ddx + ddy * ddy <= rr2:
                             eaten[fi] = True
                             new_e = float(self.energy[i].item()) + float(self.food_e[fi])
@@ -534,10 +587,11 @@ class World:
         y = self.y[idx]
         dx = x - float(wx)
         dy = y - float(wy)
-        dx = torch.where(dx > 0.5 * C.W, dx - C.W, dx)
-        dx = torch.where(dx < -0.5 * C.W, dx + C.W, dx)
-        dy = torch.where(dy > 0.5 * C.H, dy - C.H, dy)
-        dy = torch.where(dy < -0.5 * C.H, dy + C.H, dy)
+        if not getattr(C, "ENABLE_BOUNDARY", False):
+            dx = torch.where(dx > 0.5 * C.W, dx - C.W, dx)
+            dx = torch.where(dx < -0.5 * C.W, dx + C.W, dx)
+            dy = torch.where(dy > 0.5 * C.H, dy - C.H, dy)
+            dy = torch.where(dy < -0.5 * C.H, dy + C.H, dy)
         d2 = dx * dx + dy * dy
         minv, arg = torch.min(d2, dim=0)
         if float(minv.item()) <= float(radius_px) * float(radius_px):
@@ -567,8 +621,16 @@ class World:
         range_cy = max(1, int((C.OBS_RANGE_PX / C.H) * gh))
         ox = torch.linspace(-range_cx, range_cx, N, device=self.device).to(torch.int64)
         oy = torch.linspace(-range_cy, range_cy, N, device=self.device).to(torch.int64)
-        gx = (rx[:, None, None] + ox[None, None, :]) % gw
-        gy = (ry[:, None, None] + oy[None, :, None]) % gh
+        if getattr(C, "ENABLE_BOUNDARY", False):
+            gx_raw = (rx[:, None, None] + ox[None, None, :])
+            gy_raw = (ry[:, None, None] + oy[None, :, None])
+            boundary = (gx_raw < 0) | (gx_raw >= gw) | (gy_raw < 0) | (gy_raw >= gh)
+            gx = torch.clamp(gx_raw, 0, gw - 1)
+            gy = torch.clamp(gy_raw, 0, gh - 1)
+        else:
+            gx = (rx[:, None, None] + ox[None, None, :]) % gw
+            gy = (ry[:, None, None] + oy[None, :, None]) % gh
+            boundary = torch.zeros((1, N, N), device=self.device, dtype=torch.bool)
 
         hue = raster[0][gy, gx]
         sat = raster[1][gy, gx]
@@ -578,7 +640,8 @@ class World:
         hue = torch.where(food > 0.5, fh, hue)
         sat = torch.where(food > 0.5, fs, sat)
 
-        flat = torch.stack([hue, sat], dim=3).reshape(1, -1)
+        bnd = boundary.to(hue.dtype)
+        flat = torch.stack([hue, sat, bnd], dim=3).reshape(1, -1)
         efrac = (self.energy[idx] / torch.clamp(self.emax[idx], min=1e-6)).unsqueeze(1)
         bias = torch.ones((1, 1), device=self.device)
         obs = torch.cat([flat, efrac, bias], dim=1)

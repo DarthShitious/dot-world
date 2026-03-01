@@ -59,3 +59,7 @@ def scalar_to_gray(v: float, vmin: float, vmax: float):
         t = max(0.0, min(1.0, t))
         g = int(255 * t)
     return (g, g, g)
+
+
+def plain_delta(a: float, b: float) -> float:
+    return b - a

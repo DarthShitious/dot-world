@@ -5,7 +5,7 @@ H = 540
 HUD_H = 52
 FPS_RENDER = 60
 
-INIT_POP = 20
+INIT_POP = 200
 MAX_POP = 8000
 
 DOT_RADIUS_PX = 4  # fixed radius for all dots
@@ -22,7 +22,7 @@ MOVE_COST = 0.0175 #0.04
 
 FOOD_ENERGY = 25.0
 FOOD_SIZE_PX = 5
-FOOD_SPAWN_RATE = 0.5
+FOOD_SPAWN_RATE = 2.0
 MAX_FOOD = 500
 
 CORPSE_FRACTION = 1.0
@@ -35,13 +35,13 @@ ATTACK_PENALTY = 0.2
 SEX_MIN_FRAC = 0.60
 SEX_POST_FRAC = 0.10
 SEX_OFFSPRING = 4
-MUT_STD = 0.02
+MUT_STD = 0.01
 
 ASEX_OFFSPRING = 2
 ASEX_TRIGGER_OVERFLOW = True
 
 RECALL_BUFFER_SIZE = 100
-RESTART_RANDOM_FRAC = 0.5
+RESTART_RANDOM_FRAC = 0.1
 
 BALDWIN_ENABLED_DEFAULT = True
 RL_LR = 2e-3
@@ -56,7 +56,12 @@ HIDDEN1 = 16
 HIDDEN2 = 32
 
 # Inspector panel (right-side)
-INSPECT_W = 200
+INSPECT_W = 150
 INSPECT_PAD = 10
 INSPECT_REFRESH_DIV = 1  # update inspector visuals every N rendered frames
 PICK_RADIUS_PX = 10
+
+
+# Boundary mode
+# True: hard rectangular boundary. False: cyclic torus (wrap-around).
+ENABLE_BOUNDARY = True
