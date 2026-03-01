@@ -17,6 +17,7 @@ def main():
     ren = Renderer()
 
     render_on = True
+    paused = False
     running = True
 
     last = time.perf_counter()
@@ -37,21 +38,33 @@ def main():
                     running = False
                 elif ev.key == pygame.K_b:
                     render_on = not render_on
+                elif ev.key == pygame.K_SPACE:
+                    paused = not paused
                 elif ev.key == pygame.K_l:
                     world.baldwin_enabled = not world.baldwin_enabled
                 elif ev.key == pygame.K_r:
                     world.reset(hard=True)
 
         if render_on:
-            world.step()
+            if not paused:
+                world.step()
             now = time.perf_counter()
             dt = now - last
             last = now
             fps = (1.0 / dt) if dt > 1e-6 else 0.0
             fps_smooth = 0.9 * fps_smooth + 0.1 * fps
-            ren.draw(world, True, "Render=ON (B fast-forward)", fps_smooth)
+            ren.draw(world, True, ("PAUSED (SPACE)" if paused else "Render=ON (B fast-forward)"), fps_smooth)
             ren.clock.tick(C.FPS_RENDER)
         else:
+            if paused:
+                now = time.perf_counter()
+                dt = now - last
+                last = now
+                fps = (1.0 / dt) if dt > 1e-6 else 0.0
+                fps_smooth = 0.9 * fps_smooth + 0.1 * fps
+                ren.draw(world, True, "PAUSED (SPACE)", fps_smooth)
+                ren.clock.tick(C.FPS_RENDER)
+                continue
             start = time.perf_counter()
             steps = 0
             # run flat-out; only stop to process events and occasionally draw HUD
@@ -73,11 +86,13 @@ def main():
                                 running = False
                             elif ev.key == pygame.K_b:
                                 render_on = not render_on
+                            elif ev.key == pygame.K_SPACE:
+                                paused = not paused
                             elif ev.key == pygame.K_l:
                                 world.baldwin_enabled = not world.baldwin_enabled
                             elif ev.key == pygame.K_r:
                                 world.reset(hard=True)
-                    if not running or render_on:
+                    if not running or render_on or paused:
                         break
                 if time.perf_counter() - start > 0.08:
                     break

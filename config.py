@@ -9,7 +9,7 @@ INIT_POP = 20
 MAX_POP = 8000
 
 DOT_RADIUS_PX = 4  # fixed radius for all dots
-MASS_MIN = 2.0
+MASS_MIN = 0.0
 MASS_MAX = 2.0
 STRENGTH_MIN = 1.0
 STRENGTH_MAX = 1.0
@@ -17,8 +17,8 @@ STRENGTH_MAX = 1.0
 ENERGY_PER_MASS = 50.0
 ENERGY_DECAY_PER_TICK = 0.05
 
-MAX_MOVE_PX = 6.0
-MOVE_COST = 0.02
+MAX_MOVE_PX = 12.0
+MOVE_COST = 0.0175 #0.04
 
 FOOD_ENERGY = 25.0
 FOOD_SIZE_PX = 5
@@ -56,7 +56,7 @@ HIDDEN1 = 16
 HIDDEN2 = 32
 
 # Inspector panel (right-side)
-INSPECT_W = 240
+INSPECT_W = 200
 INSPECT_PAD = 10
 INSPECT_REFRESH_DIV = 1  # update inspector visuals every N rendered frames
 PICK_RADIUS_PX = 10
